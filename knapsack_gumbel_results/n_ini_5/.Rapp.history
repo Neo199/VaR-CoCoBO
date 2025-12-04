@@ -1,0 +1,4 @@
+load("/Users/niyati/Projects:Codes/P3Compute/knapsack_gumbel_results/n_ini_5/instance_1.RData")
+dt <- load("/Users/niyati/Projects:Codes/P3Compute/knapsack_gumbel_results/n_ini_5/instance_1.RData")
+dt
+res
