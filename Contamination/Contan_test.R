@@ -1,8 +1,8 @@
 # Test problem for a constrained combinatorial Bayesian optimisation
-# PRBOCS-VB method is used to solve the problem here.
+# Var-CoCoBO method is used to solve the problem here.
 # Approaching the constraints by PRing them before sampling and adding gumbel trick
 # GA (genetic algorithm) for comparison and true answer
-
+# MINIMISATION PROBELM
 # This code is for the CONTAMINATION test problem in BOCS
 
 # Author: Niyati Seth
@@ -36,6 +36,7 @@ Contamination <- function(x, runlength, seed = 10) {
   # x: binary or {0,1} vector of length n (prevention decisions)
   # runlength: number of independent generations (positive integer)
   # seed: integer seed for reproducibility
+  set.seed(seed)
   n <- length(x)
   # browser()
   # Input validation
@@ -80,6 +81,7 @@ Contamination <- function(x, runlength, seed = 10) {
       X[i, ] <- Lambda[i, ] * (1 - u[i]) * (1 - X[i - 1, ]) + (1 - Gamma[i, ] * u[i]) * X[i - 1, ]
     }
   }
+
   
   # Limit and cost of contamination control
   limit <- 1 - epsilon
@@ -96,8 +98,16 @@ Contamination <- function(x, runlength, seed = 10) {
     constraint[k] <- (sum(con[, k]) / runlength)
   }
   ConstraintCov <- cov(con)
+  #constraint[k] = proportion of generations where stage k satisfies X[i] ≤ p, we want constraint > limit
+  #limit = 1 − epsilon
   
-  return(list(fn = fn, constraint = constraint, ConstraintCov = ConstraintCov, limit = limit))
+  # Violation vector (how much safety falls short)
+  violation_vec <- pmax(0, limit - constraint) # positive if constraint < limit
+  # aggregate measure to flag infeasibility (max violation across stages)
+  total_constraint_violation <- max(violation_vec)
+  
+  return(list(fn = fn, constraint = constraint, ConstraintCov = ConstraintCov, limit = limit,
+              total_constraint_violation = total_constraint_violation))
 }
 
 
@@ -112,28 +122,8 @@ contamination_prob <- function(x_mat, n_samples, gamma = 10) {
     cost[i] <- res$fn
     }
   return(cost)
-  }
+}
     
-# contamination_prob <- function(x_mat, n_samples, gamma = 10) {
-#   # x_mat: matrix where each row is one binary vector of length n
-#   # returns: vector of penalised objective values (cost - gamma * sum(constraint_violation_positive?))
-#   num_inputs <- nrow(x_mat)
-#   out <- numeric(num_inputs)
-#   
-#   for (i in seq_len(num_inputs)) {
-#     res <- Contamination(x_mat[i, ], n_samples, seed = 10)
-#     cost <- res$fn
-#     constr <- res$constraint   # length n, positive = fraction_satisfied - limit
-#     # If you want to penalize *violations* only (i.e. when fraction_satisfied < limit), use:
-#     violations <- pmin(0, constr)  # negative values indicate violations
-#     penalty <- -sum(violations)    # positive penalty = total shortfall fraction
-#     out[i] <- cost + gamma * penalty
-#     # If instead you want cost - gamma * constraint (as earlier), uncomment below:
-#     # out[i] <- cost - sum(gamma * constr)
-#   }
-#   return(out)
-# }
-
 # ---------------------------------------------------------
 # ORDER EFFECTS/THETA INTERACTION - to account interaction
 # ---------------------------------------------------------
@@ -239,11 +229,10 @@ thompson_sam_svb <- function(theta_current, vb_model, duplicate_cols, vb_data, o
 # ---------------------------------------------------------
 # SET INPUTS
 # ---------------------------------------------------------
-n_vars <-10
+n_vars <-25  
 evalBudget <-100
-n_init <- 5
+n_init <- 10
 lambda <- 10
-minSpend <- 30
 order <- 2
 seed <- 1
 
@@ -252,20 +241,31 @@ seed <- 1
 # INITIAL SAMPLES FOR STATISTICAL MODELS
 # ---------------------------------------------------------
 x_vals <- sample_models(n_init, n_vars)
-y_vals <- contamination_prob_lang(x_vals, 100)
+res <- Contamination(x_vals, 100)
 
 x_vals
+num_inputs <- nrow(x_vals)
+y_vals <- numeric(num_inputs)
+
+for (i in seq_len(num_inputs)) {
+  res <- Contamination(x_vals[i, ], 100, seed = 10)
+  y_vals[i] <- res$fn
+  feasible[i] <- all(res$constraint > res$limit)
+}
+
 y_vals
+feasible
+
 
 # ---------------------------------------------------------
 # DEFINE TRUE MODEL
 # ---------------------------------------------------------
 model <- function(x_vals){
-  contamination_prob(x_vals, 100) 
+  Contamination(x_vals, 100)
 }
 
 # ---------------------------------------------------------
-# RUN PROCS
+# RUN VaR-CoCoBO
 # ---------------------------------------------------------
 
 # Find number of iterations based on total budget
@@ -284,21 +284,13 @@ inter_combos <- xTrain_in_comb$combos
 # cat("xTrain with interaction terms","\n")
 # print(xTrain_in)
 
-cDims <- dim(xTrain_in)
-nSamps <- cDims[1]
-nCoeffs <- cDims[2]
-# cat("nSamps, nCoeffs", c(nSamps, nCoeffs), "\n")
-
-hs_ss_sd <- sd(xTrain)
-n <- nrow(xTrain_in)
-p <- ncol(xTrain_in)
-
-#Setup dataframe for stan_glam training 
+#Setup dataframe for stan_glm training 
 X <- xTrain_in
 y <- y_vals
 
 #Create a dataframe
 data <- data.frame(y=y , X)
+data_history <- data.frame(y = y, x_vals, feasibility = data_feasible)
 
 # Initialize a data frame to store iteration results
 optim_result <- matrix(0, evalBudget, n_vars)
@@ -311,18 +303,18 @@ n_vars <- length(costs)
 theta_current <- rep(0.5, n_vars)
 x_history <- list()
 y_history <- numeric(evalBudget)
+data_feasible <- rep(NA, evalBudget)
+data_feasible[1:n_init] <- as.logical(feasible)
+total_violation <- rep(NA, evalBudget)
 
 vb_data <- data[,-1]
-
 # Initialize a data frame to store iteration results
 prbocs_vb_result <- matrix(0, evalBudget, n_vars)
 
 # Find duplicate columns
 duplicate_cols <- which(duplicated(as.list(vb_data)))
-
 # Save the removed columns in a separate data frame
 removed_columns <- vb_data[, duplicate_cols, drop = FALSE]
-
 # Keep only unique columns
 data_reduced <- vb_data[, !duplicated(as.list(vb_data))]
 
@@ -339,14 +331,10 @@ vb_model <- svb.fit(
   intercept = TRUE       # Include intercept in the model
 )
 
-
+# ---------- Main optimization loop ----------
 for (t in 1:evalBudget) {
   print(paste("prbocsvb_iteration_",t))
 
-  # browser()
-  # Sample new x using Gumbel rounding with constraints
-  # x_new <- gumbel_acquisition(theta_current, vb_model, lambda, order, n_vars)
-  
   stat_model <- function(theta) {
     thompson_sam_svb(theta, vb_model = vb_model, duplicate_cols, vb_data, order)
   }
@@ -357,19 +345,22 @@ for (t in 1:evalBudget) {
   cat("expected_val", expected_val, "\n")
   theta_current <- expected_val
   
+  # Gumbel + sample
   g <- -log(-log(runif(n_vars)))
   x_theta_current <- rbinom(n_vars, 1, theta_current)
+  cat("X before constraint", x_theta_current, "\n")
   
+  # compute per-stage violations for sampled x (violation = pmax(0, limit - constraint))
   score <- numeric(n_vars)
   contam_res <- Contamination(x_theta_current, 100)
-  constr <- contam_res$constraint
-  limit <- contam_res$limit
-  
+  constr <- contam_res$constraint     # proportion SAFE
+  limit <- contam_res$limit           # required safety probability (1-epsilon)
+  violation_sample <- pmax(0, limit - constr)  # positive when unsafe
+
   for (j in seq_len(n_vars)) {
-    # Penalize only violated constraints
-    violations <- pmin(0, constr[j])
-    penalty <- -violations  # positive if constraint violated
-    score[j] <- theta_current[j] + g[j] + lambda * penalty
+    penalty <- lambda * sum(violation_sample)      # penalty per-coordinate: how much stage falls short of required safety
+    # subtract penalty: higher penalty reduces score
+    score[j] <- theta_current[j] + g[j] - penalty
   }
   cat("Score:", score, "\n")
   
@@ -377,41 +368,43 @@ for (t in 1:evalBudget) {
   idx <- order(score, decreasing = TRUE)
   
   
-  # ---------------------------------------------------------
-  # Construct x_new incrementally until contamination constraint satisfied
-  # ---------------------------------------------------------
+  # greedily build a feasible x_new: add bit if resulting design remains feasible
   
   x_new <- rep(0, n_vars)
   
+  
   for (k in seq_along(idx)) {
-    # Turn on the next best bit
-    x_new[idx[k]] <- 1
-    
-    # Evaluate contamination constraints for the current x
-    contam_res <- Contamination(x_new, 100)
-    constr <- contam_res$constraint
-    limit <- contam_res$limit
-    
-    # Suppose Contamination()$constraint gives vector of constraint values
-    # and all constraints are satisfied if they are >= 0
-    if (all(constr > limit)) {
-      message("All constraints satisfied at step ", k)
-      break
+    # Check if this stage is currently unsafe
+    contam_try <- Contamination(x_new, 100)
+    constr_try <- contam_try$constraint
+    limit_try <- contam_try$limit
+    # browser()
+    if (constr_try[idx[k]] < limit_try[idx[k]]) {
+      # Stage k is unsafe → apply prevention
+      x_new[idx[k]] <- 1
     }
+    # else stage is already safe → leave prevention off
   }
+  browser()
+
+  # Evaluate contamination for x_new
+  res <- Contamination(x_new,100)
+  y_new <- res$fn
+  x_new <- matrix(x_new, nrow = 1)
+  data_feasible[t + n_init] <- as.logical(all(res$constraint > res$limit))
   
-  # Evaluate objective for this final feasible x
-  y_new <- contam_res$fn
+  # browser()
+  # Save history
+  data_hnew <- data.frame(y = y_new, x_new, feasibility = data_feasible[t + n_init])
+  colnames(data_hnew) <- colnames(data_history)
+  data_history <- rbind(data_history, data_hnew)
   
-  # Store results
   x_history[[t]] <- x_new
   y_history[t] <- y_new
   
-  # Update dataset (optional: append new x_new, y_new)
-  # data <- rbind(data, c(y_new, theta_interaction(x_new, order, n_vars)))
-  
   cat(sprintf("Iteration %d: x = %s, y = %.3f\n", t, paste(x_new, collapse=""), y_new))
   
+  # append new observation to dataset (include interactions)
   x_new <- matrix(x_new, nrow = 1, ncol = n_vars)
   x_new_in_comb <- order_effects(x_new, order)
   x_new_in <- x_new_in_comb$xTrain_in
@@ -423,6 +416,7 @@ for (t in 1:evalBudget) {
   
   prbocs_vb_result[t,] <- expected_val
   
+  # prepare for next SVB fit: rebuild design and detect duplicates
   vb_data <- data[,-1]
   
   # Find duplicate columns
@@ -449,47 +443,100 @@ for (t in 1:evalBudget) {
   
 }
 
-contamination_prob_lang <- function(x_mat, n_samples, gamma = 10) {
-  # x_mat: matrix where each row is one binary vector of length n
-  # returns: vector of penalised objective values (cost - gamma * sum(constraint_violation_positive?))
-  num_inputs <- nrow(x_mat)
+test_feasible <- function(x) {
+  res <- Contamination(x, 100)
+  cat("\nx =", x, "\n")
+  cat("constraint =", round(res$constraint, 3), "\n")
+  cat("limit      =", round(res$limit, 3), "\n")
+  cat("feasible?  =", all(res$constraint >= res$limit), "\n")
+  cat("shortfall  =", round(res$limit - res$constraint, 3), "\n")
+}
+
+for (i in 1:length(x_history)) test_feasible(x_history[[i]])
+
+# # ---------------------------------------------------------
+# # Penalised wrapper used by GA 
+# # ---------------------------------------------------------
+# contamination_prob_lang <- function(x_mat, n_samples, gamma = 10, seed = 10) {
+#   if (is.vector(x_mat)) x_mat <- matrix(x_mat, nrow = 1)
+#   num_inputs <- nrow(x_mat)
+#   out <- numeric(num_inputs)
+#   
+#   for (i in seq_len(num_inputs)) {
+#     contamination_result <- Contamination(x_mat[i, ], n_samples, seed = seed)
+#     cost <- contamination_result$fn
+#     constraint <- contamination_result$constraint    # proportion SAFE
+#     limit_vec <- contamination_result$limit
+#    
+#     # MINIMISATION objective: add penalty proportional to shortfall
+#     out[i] <- cost - sum(gamma * constraint)
+#   }
+#   return(out)
+# }
+# 
+langmodel <- function(x_vals) {
+  num_inputs <- nrow(x_vals)
   out <- numeric(num_inputs)
 
-  # Iterate over each input sample
-  for (i in 1:num_inputs) {
-    # Run contamination study
-    contamination_result <- Contamination(x[i, ], n_samples, seed)
-    cost <- contamination_result$fn
-    constraint <- contamination_result$constraint
-    
-    # Compute total output
-    out[i] <- cost - sum(gamma * constraint)
-  }
+  res <- Contamination(x_vals, 100)
+  gamma <- 10
+  cost <- res$fn
+  # penalty must be based on SHORTFALL, not raw constraint
+  shortfall <- pmax(0, res$limit - res$constraint)
+
+  out[1] <- cost + gamma * sum(shortfall)
   return(out)
 }
 
-langmodel <- function(x_vals){
-  contamination_prob_lang(x_vals, 100) 
-}
 
+# GA expects a fitness to MAXIMISE, convert minimisation -> negative
 ga_model <- function(x) {
-  x_mat <- matrix(x, nrow = 1)  # convert vector to 1-row matrix
-  langmodel(x_mat)
+  x_mat <- matrix(x, nrow = 1)
+  -langmodel(x_mat)
 }
 
 GA_run <- ga(type = "binary", fitness = ga_model, nBits = n_vars,
              popSize = 100, maxiter = 1000, run = 100, monitor = FALSE)
 ga_result <- list(solution = GA_run@solution, fitness_value = GA_run@fitnessValue)
 
-ga_result$solution
+print(ga_result)
+
 
 # ---------------------------------------------------------
 # PLOTS
 # ---------------------------------------------------------
+# ---------------------------------------------------------
+# Optimisation Trace Plot
+# ---------------------------------------------------------
+
+# df_trace <- data.frame(
+#   iter = 1:length(y_history),
+#   y = y_history,
+#   feasible = sapply(1:length(y_history), function(i) {
+#     x_i <- optim_result[i, ]
+#     cont_res <- Contamination(x_i,100)
+#     cont_res$total_constraint <= cont_res$limit
+#   })
+# )
 # 
-# res <- prbocs_vb_result$data
+# df_trace$best_feas <- NA
+# best_so_far <- -Inf
+# for (i in 1:nrow(df_trace)) {
+#   if (df_trace$feasible[i]) {
+#     best_so_far <- max(best_so_far, df_trace$y[i])
+#   }
+#   df_trace$best_feas[i] <- best_so_far
+# }
 # 
-# # Plot objective function values versus iterations for normal optimization
-# plot(1:nrow(res), res$y , type = "l", xlab = "Iterations", 
-#      ylab = "Objective Function Value", main = "Objective Function vs Iterations", 
-#      col = "red", xlim = c(1, nrow(res)))
+# library(ggplot2)
+# 
+# ggplot(df_trace, aes(x = iter)) +
+#   geom_line(aes(y = best_feas), linewidth = 1, colour = "blue") +
+#   geom_point(aes(y = y, colour = feasible)) +
+#   scale_colour_manual(values = c("red", "darkgreen")) +
+#   labs(
+#     title = "PRBOCS-VB Optimisation Trace",
+#     y = "Objective Value",
+#     colour = "Feasible?"
+#   ) +
+#   theme_minimal()

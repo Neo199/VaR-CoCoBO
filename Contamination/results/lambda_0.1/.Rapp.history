@@ -1,0 +1,26 @@
+load("/Users/niyati/Projects:Codes/P3Compute/Contamination/results/lambda_0.1/instance_1.RData")
+res
+load("/Users/niyati/Projects:Codes/P3Compute/Contamination/results/lambda_0.1/instance_1.RData")
+lpt1 <- load("/Users/niyati/Projects:Codes/P3Compute/Contamination/results/lambda_0.1/instance_1.RData")
+lpt1
+lpt1d<- res
+lpt1d
+load("/Users/niyati/Projects:Codes/P3Compute/Contamination/results/lambda_1/instance_1.RData")
+l1d <- res
+lpt1d
+l1d
+head(lpt1d$data$y, 20)
+head(l1d$data$y, 20)
+load("/Users/niyati/Projects:Codes/P3Compute/Contamination/results/lambda_0.1/instance_9.RData")
+res
+load("/Users/niyati/Projects:Codes/P3Compute/Contamination/results/lambda_100/instance_10.RData")
+res
+load("/Users/niyati/Projects:Codes/P3Compute/Contamination/results/lambda_0.1/instance_9.RData")
+res
+load("/Users/niyati/Projects:Codes/P3Compute/Contamination/results/lambda_100/instance_10.RData")
+res
+load("/Users/niyati/Projects:Codes/P3Compute/Contamination/results/lambda_100/instance_1.RData")
+res
+load("/Users/niyati/Projects:Codes/P3Compute/Contamination/results/lambda_10/instance_10.RData")
+res
+load("/Users/niyati/Projects:Codes/P3Compute/Contamination/results/lambda_1/instance_10.RData")

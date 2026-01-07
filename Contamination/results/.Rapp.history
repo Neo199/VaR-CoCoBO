@@ -1,0 +1,4 @@
+load("/Users/niyati/Projects:Codes/P3Compute/Contamination/results/instance_1.RData")
+dt <- load("/Users/niyati/Projects:Codes/P3Compute/Contamination/results/instance_1.RData")
+dt
+res
