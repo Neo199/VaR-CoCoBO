@@ -5,7 +5,7 @@ library(ggplot2)
 all_data <- NULL   # will collect everything here
 
 lambda_dirs <- list.dirs(
-  "/Users/niyati/Projects:Codes/P3Compute/Contamination/results",
+  "/Users/niyati/Projects:Codes/VaR-CoCoBO/Contamination/results",
   recursive = FALSE
 )
 
@@ -170,7 +170,7 @@ trace_plot <- ggplot(
   )
 
 ggsave(
-  filename = "/Users/niyati/Projects:Codes/P3Compute/Contamination/contan_faceted_trace.pdf",
+  filename = "/Users/niyati/Projects:Codes/VaR-CoCoBO/Contamination/contan_faceted_trace.pdf",
   plot = trace_plot,
   device = cairo_pdf,
   width = 11, height = 6, units = "in",
@@ -236,13 +236,14 @@ feasible <- ggplot() +
              labeller = lambda_labeller) +
   
   scale_color_manual(
-    values = c(`FALSE` = "red", `TRUE` = "#000000"),
+    values = c("FALSE" = "red", "TRUE" = "black"),
+    labels = c("FALSE" = "No", "TRUE" = "Yes"),
     name = "Feasible"
   ) +
-  
   scale_shape_manual(
     values = c(`TRUE` = 17, `FALSE` = 16),
-    name = "Initial?"
+    labels = c(`TRUE` = "Initial Samples", `FALSE` = "BO Samples"),
+    name = ""
   ) +
   
   labs(
@@ -256,9 +257,8 @@ feasible <- ggplot() +
     legend.position = "right",
     strip.text = element_text(size = 13)
   )
-
 ggsave(
-  filename = "/Users/niyati/Projects:Codes/P3Compute/Contamination/contan_faceted_feasibility.pdf",
+  filename = "/Users/niyati/Projects:Codes/VaR-CoCoBO/Contamination/contan_faceted_feasibility.pdf",
   plot = feasible,
   device = cairo_pdf,
   width = 11, height = 6, units = "in",

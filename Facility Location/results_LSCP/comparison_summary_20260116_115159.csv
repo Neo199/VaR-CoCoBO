@@ -1,0 +1,4 @@
+"method","objective","iteration","gap_from_optimal","time_seconds"
+"GLPK",8,NA,0,1.28032493591309
+"Best_BO",8,16,0,3141.34653496742
+"Final_BO",10,250,2,3141.34653496742

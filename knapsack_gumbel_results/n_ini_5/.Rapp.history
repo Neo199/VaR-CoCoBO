@@ -2,3 +2,13 @@ load("/Users/niyati/Projects:Codes/P3Compute/knapsack_gumbel_results/n_ini_5/ins
 dt <- load("/Users/niyati/Projects:Codes/P3Compute/knapsack_gumbel_results/n_ini_5/instance_1.RData")
 dt
 res
+load("/Users/niyati/Projects:Codes/VaR-CoCoBO/knapsack_gumbel_results/n_ini_5/instance_1.RData")
+a
+result
+results
+dt <- load("/Users/niyati/Projects:Codes/VaR-CoCoBO/knapsack_gumbel_results/n_ini_5/instance_1.RData")
+dt
+res
+cummax(res$data$y)
+cummax(res$data$y[5:])
+cummax(res$data$y[5:205])

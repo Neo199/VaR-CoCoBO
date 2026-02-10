@@ -3,7 +3,7 @@ library(ggplot2)
 library(dplyr)
 
 num_instances <- 10
-vd <- load("/Users/niyati/Projects:Codes/P3Compute/knapsack_gumbel_results/n_ini_5/instance_1.RData")
+vd <- load("/Users/niyati/Projects:Codes/VaR-CoCoBO/knapsack_gumbel_results/n_ini_5/instance_1.RData")
 
 # Create a list to hold all instances
 dt <- vector("list", num_instances)
@@ -13,7 +13,7 @@ time <- list()
 
 # Loop over instance files
 for (i in 1:num_instances) {
-  file_path <- paste0("/Users/niyati/Projects:Codes/P3Compute/knapsack_gumbel_results/n_ini_5/instance_", i, ".RData")
+  file_path <- paste0("/Users/niyati/Projects:Codes/VaR-CoCoBO/knapsack_gumbel_results/n_ini_5/instance_", i, ".RData")
   load(file_path)
   dt[[i]] <- res
 }
@@ -86,6 +86,61 @@ ggplot(df_trace, aes(x = iter)) +
 # ---------------------------------------------------------
 # Knapsack Problem
 # ---------------------------------------------------------
+n_vars <- 24                       # number of items / binary variables
+
+# item values (v) and weights (w) - change to your instance
+weights <- c(382745,
+             799601,
+             909247,
+             729069,
+             467902,
+             44328,
+             34610,
+             698150,
+             823460,
+             903959,
+             853665,
+             551830,
+             610856,
+             670702,
+             488960,
+             951111,
+             323046,
+             446298,
+             931161,
+             31385,
+             496951,
+             264724,
+             224916,
+             169684)
+
+values <- c( 825594,
+             1677009,
+             1676628,
+             1523970,
+             943972,
+             97426,
+             69666,
+             1296457,
+             1679693,
+             1902996,
+             1844992,
+             1049289,
+             1252836,
+             1319836,
+             953277,
+             2067538,
+             675367,
+             853655,
+             1826027,
+             65731,
+             901489,
+             577243,
+             466257,
+             369261)
+W <- 6404180                      # knapsack capacity
+
+
 
 knapsack <- function(x, seed = 10) {
   # x: binary vector (1 = facility installed)
@@ -114,7 +169,7 @@ load_all_instances <- function(n_ini, num_instances) {
   
   for (i in 1:num_instances) {
     path <- sprintf(
-      "/Users/niyati/Projects:Codes/P3Compute/knapsack_gumbel_results/n_ini_%s/instance_%s.RData",
+      "/Users/niyati/Projects:Codes/VaR-CoCoBO/knapsack_gumbel_results/n_ini_%s/instance_%s.RData",
       n_ini, i
     )
     load(path)   # loads `res`
@@ -333,7 +388,7 @@ plot_faceted <- ggplot(summary_long,
   geom_hline(yintercept = true_opt,
              linetype = "dashed", linewidth = 1, color = "darkgreen") +
   
-  facet_wrap(~ n_ini, scales = "free_y") +
+  facet_wrap(~ n_ini, scales = "free_x") +
   
   theme_bw(base_size = 14) +
   labs(
@@ -373,8 +428,10 @@ plot_faceted_with_initials <- ggplot() +
              aes(x = iter, y = y, color = feasible, shape = init),
              size = 2) +
   
-  scale_color_manual(values = c("FALSE" = "red", "TRUE" = "black")) +
-  scale_shape_manual(values = c(`TRUE` = 17, `FALSE` = 16)) +
+  scale_color_manual(values = c("FALSE" = "red", "TRUE" = "black"),
+                     labels = c("FALSE" = "No", "TRUE" = "Yes")) +
+  scale_shape_manual(values = c(`TRUE` = 17, `FALSE` = 16),
+                     labels = c(`TRUE` = "Initial Samples", `FALSE` = "BO Samples")) +
   
   # --- FIXED VERTICAL LINES ---
   geom_vline(data = vline_df,
@@ -385,7 +442,7 @@ plot_faceted_with_initials <- ggplot() +
   geom_hline(yintercept = true_opt,
              linetype = "dashed", linewidth = 1, color = "darkgreen") +
   
-  facet_wrap(~ n_ini, scales = "free_y") +
+  facet_wrap(~ n_ini, scales = "free_x") +
   
   theme_bw(base_size = 14) +
   labs(
@@ -393,12 +450,11 @@ plot_faceted_with_initials <- ggplot() +
     x = "Iteration",
     y = "Objective Value y",
     color = "Feasible",
-    shape = "Initial?"
+    shape = ""
   )
-
 plot_faceted_with_initials
 ggsave(
-  filename = "/Users/niyati/Projects:Codes/P3Compute/knapsack_gumbel_results/faceted_with_initials.pdf",
+  filename = "/Users/niyati/Projects:Codes/VaR-CoCoBO/knapsack_gumbel_results/faceted_with_initials.pdf",
   plot = plot_faceted_with_initials,
   device = cairo_pdf,
   width = 11, height = 6, units = "in",

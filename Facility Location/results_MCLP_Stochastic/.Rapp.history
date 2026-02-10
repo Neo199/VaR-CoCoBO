@@ -1,0 +1,5 @@
+load("/Users/niyati/Projects:Codes/results_MCLP_Stochastic/bo_instance_1.RData")
+results
+a <- load("/Users/niyati/Projects:Codes/results_MCLP_Stochastic/bo_instance_1.RData")
+a
+result

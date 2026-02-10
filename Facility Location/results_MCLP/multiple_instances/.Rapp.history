@@ -1,0 +1,10 @@
+load("/Users/niyati/Projects:Codes/results_MCLP/multiple_instances/instance_1.RData")
+a <- load("/Users/niyati/Projects:Codes/results_MCLP/multiple_instances/instance_1.RData")
+a
+result
+load("/Users/niyati/Projects:Codes/P3Compute/Facility Location/results_MCLP/multiple_instances/instance_1.RData")
+result
+load("/Users/niyati/Projects:Codes/P3Compute/Facility Location/results_MCLP/multiple_instances/instance_2.RData")
+result
+load("/Users/niyati/Projects:Codes/P3Compute/Facility Location/results_MCLP/multiple_instances/instance_5.RData")
+result
