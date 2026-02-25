@@ -2,87 +2,6 @@
 library(ggplot2)
 library(dplyr)
 
-num_instances <- 10
-vd <- load("/Users/niyati/Projects:Codes/VaR-CoCoBO/knapsack_gumbel_results/n_ini_5/instance_1.RData")
-
-# Create a list to hold all instances
-dt <- vector("list", num_instances)
-
-data <- list()
-time <- list()
-
-# Loop over instance files
-for (i in 1:num_instances) {
-  file_path <- paste0("/Users/niyati/Projects:Codes/VaR-CoCoBO/knapsack_gumbel_results/n_ini_5/instance_", i, ".RData")
-  load(file_path)
-  dt[[i]] <- res
-}
-
-for (i in 1:num_instances) {
-  data[[i]] <- dt[[i]]$data
-  time[[i]] <- dt[[i]]$runtime_sec
-}
-
-get_mean_df <- function(data) {
-  num_rows <- nrow(data[[1]])
-  y_means <- numeric(num_rows)
-  y_lowers <- numeric(num_rows)
-  y_uppers <- numeric(num_rows)
-  y_max <- numeric(num_rows)
-  
-  y_vals <- sapply(data, function(df) df$y)
-  for (i in 1:num_instances) {
-    for (j in 1:num_rows) {
-      y_means[j] <- rowMeans(y_vals)
-      y_max[j] <- cummax(y_vals[,i])
-      stderr <- sd(y_vals) / sqrt(length(y_vals))
-      error_margin <- qt(0.975, df = length(y_vals) - 1) * stderr
-      y_lowers[j] <- y_max[j] - error_margin
-      y_uppers[j] <- y_max[j] + error_margin
-    }
-  }
-  
-  
-  data.frame(
-    row = 1:num_rows,
-    mean_y = y_means,
-    max_y = y_max,
-    ci_lower = y_lowers,
-    ci_upper = y_uppers
-  )
-}
-
-df_trace <- data.frame(
-  iter = 1:length(y_history),
-  y = y_history,
-  feasible = sapply(1:length(y_history), function(i) {
-    x_i <- optim_result[i, ]
-    knapsack_res <- knapsack(x_i)
-    knapsack_res$total_constraint <= knapsack_res$limit
-  })
-)
-
-df_trace$best_feas <- NA
-best_so_far <- -Inf
-for (i in 1:nrow(df_trace)) {
-  if (df_trace$feasible[i]) {
-    best_so_far <- max(best_so_far, df_trace$y[i])
-  }
-  df_trace$best_feas[i] <- best_so_far
-}
-
-
-ggplot(df_trace, aes(x = iter)) +
-  geom_line(aes(y = best_feas), linewidth = 1, colour = "blue") +
-  geom_point(aes(y = y, colour = feasible)) +
-  scale_colour_manual(values = c("red", "darkgreen")) +
-  labs(
-    title = "PRBOCS-VB Optimisation Trace",
-    y = "Objective Value",
-    colour = "Feasible?"
-  ) +
-  theme_minimal()
-
 # ---------------------------------------------------------
 # Knapsack Problem
 # ---------------------------------------------------------
@@ -354,18 +273,27 @@ plot_combined <- ggplot(summary_long,
   geom_hline(yintercept = true_opt,
              linetype = "dashed", linewidth = 1.1, color = "black") +
   
-  scale_color_brewer(palette = "Dark2", name = "n_ini") +
-  scale_fill_brewer(palette = "Dark2", name = "n_ini") +
+  # Label the true optimum line
+  annotate("text",
+           x = Inf, y = true_opt,
+           label = "True Optimum",
+           hjust = 1.1, vjust = -0.5,
+           size = 4, color = "black") +
+  
+  scale_color_brewer(palette = "Dark2",
+                     name = expression(N[0])) +
+  scale_fill_brewer(palette = "Dark2",
+                    name = expression(N[0])) +
   
   theme_bw(base_size = 14) +
   labs(
-    title = "Comparison of Best-Feasible Traces for Different n_ini",
+    title = expression("Comparison of Best-Feasible Traces for Different " * N[0]),
     x = "Iteration",
     y = "Best Feasible y",
-    subtitle = sprintf("True optimum y = %.3f (dashed)", true_opt)
+    subtitle = sprintf("True optimum y = %.3f", true_opt)
   )
 ggsave(
-  filename = "/Users/niyati/Projects:Codes/P3Compute/knapsack_gumbel_results/comparison.pdf",
+  filename = "/Users/niyati/Projects:Codes/VaR-CoCoBO/knapsack_gumbel_results/comparison.pdf",
   plot = plot_combined,
   device = cairo_pdf,
   width = 11, height = 6, units = "in",
@@ -441,6 +369,11 @@ plot_faceted_with_initials <- ggplot() +
   # true optimum
   geom_hline(yintercept = true_opt,
              linetype = "dashed", linewidth = 1, color = "darkgreen") +
+  
+  geom_text(data = data.frame(n_ini = 5),  # only in the n_ini = 5 facet
+            aes(x = Inf, y = true_opt, label = "True Optimum"),
+            hjust = 1.1, vjust = -0.5,
+            size = 3.5, color = "darkgreen", inherit.aes = FALSE) +
   
   facet_wrap(~ n_ini, scales = "free_x") +
   
