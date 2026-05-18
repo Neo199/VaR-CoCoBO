@@ -117,7 +117,7 @@ The function returns the best feasible solution observed within the budget.
 
 ## Relationship to VaR-CBO
 
-This repository extends [VaR-CBO](https://github.com/<your-github-org>/VaR-CBO) (Seth and Fop, 2023). The surrogate model and probabilistic reparameterisation are inherited directly from that work; the contribution here is the Gumbel-based constraint handling mechanism and its application to constrained combinatorial problems. Both repositories share the modified `sparsevb` dependency.
+This repository extends [VaR-CBO](https://github.com/<your-github-org>/VaR-cBO) (Seth and Fop, 2023). The surrogate model and probabilistic reparameterisation are inherited directly from that work; the contribution here is the Gumbel-based constraint handling mechanism and its application to constrained combinatorial problems. Both repositories share the modified `sparsevb` dependency.
 
 ---
 
