@@ -5,7 +5,7 @@ Repository for the simulations and methods presented in:
 > **Variational Bayesian Optimisation for Constrained Combinatorial Problems**
 > Niyati Seth, Michael Fop — September 2025
 
-VaR-CoCoBO (Variational pRobabilistic **Co**nstrained **Co**mbinatorial **B**ayesian **O**ptimisation) extends the [VaR-CBO framework](https://github.com/Neo199/VaR-cBO) to settings where candidate solutions must satisfy hard feasibility constraints. Rather than handling constraints indirectly via penalty terms, VaR-CoCoBO integrates them explicitly into both the surrogate model and the acquisition function, ensuring all evaluated configurations are feasible by construction.
+VaR-CoCoBO (Variational pRobabilistic **Co**nstrained **Co**mbinatorial **B**ayesian **O**ptimisation) extends the [VaR-CBO framework](https://github.com/Neo199/VaR-CBO) to settings where candidate solutions must satisfy hard feasibility constraints. Rather than handling constraints indirectly via penalty terms, VaR-CoCoBO integrates them explicitly into both the surrogate model and the acquisition function, ensuring all evaluated configurations are feasible by construction.
 
 ---
 
@@ -58,7 +58,7 @@ A modified version of the `sparsevb` R package is required. Install directly fro
 
 ```r
 # install.packages("remotes")
-remotes::install_github("<your-github-org>/sparsevb")
+remotes::install_github("Neo199/sparsevb")
 ```
 
 > **Note:** The CRAN version of `sparsevb` will not work. Changes were made to integrate the package into the VaR-CBO/VaR-CoCoBO framework.
@@ -117,7 +117,7 @@ The function returns the best feasible solution observed within the budget.
 
 ## Relationship to VaR-CBO
 
-This repository extends [VaR-CBO](https://github.com/<your-github-org>/VaR-cBO) (Seth and Fop, 2023). The surrogate model and probabilistic reparameterisation are inherited directly from that work; the contribution here is the Gumbel-based constraint handling mechanism and its application to constrained combinatorial problems. Both repositories share the modified `sparsevb` dependency.
+This repository extends [VaR-CBO](https://github.com/Neo199/VaR-CBO) (Seth and Fop, 2023). The surrogate model and probabilistic reparameterisation are inherited directly from that work; the contribution here is the Gumbel-based constraint handling mechanism and its application to constrained combinatorial problems. Both repositories share the modified `sparsevb` dependency.
 
 ---
 
