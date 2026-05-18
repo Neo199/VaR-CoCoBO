@@ -5,7 +5,7 @@ Repository for the simulations and methods presented in:
 > **Variational Bayesian Optimisation for Constrained Combinatorial Problems**
 > Niyati Seth, Michael Fop — September 2025
 
-VaR-CoCoBO (Variational pRobabilistic **Co**nstrained **Co**mbinatorial **B**ayesian **O**ptimisation) extends the [VaR-CBO framework](https://github.com/<your-github-org>/VaR-CBO) to settings where candidate solutions must satisfy hard feasibility constraints. Rather than handling constraints indirectly via penalty terms, VaR-CoCoBO integrates them explicitly into both the surrogate model and the acquisition function, ensuring all evaluated configurations are feasible by construction.
+VaR-CoCoBO (Variational pRobabilistic **Co**nstrained **Co**mbinatorial **B**ayesian **O**ptimisation) extends the [VaR-CBO framework](https://github.com/<your-github-org>/VaR-CoCoBO) to settings where candidate solutions must satisfy hard feasibility constraints. Rather than handling constraints indirectly via penalty terms, VaR-CoCoBO integrates them explicitly into both the surrogate model and the acquisition function, ensuring all evaluated configurations are feasible by construction.
 
 ---
 
