@@ -8,8 +8,8 @@
 # LOAD Functions and Libraries
 # ---------------------------------------------------------
 
-source("~/Projects:Codes/P3Compute/sample_models.R")
-source("~/Projects:Codes/P3Compute/thompson_svb.R")
+source("~/Projects:Codes/VaR-CoCoBO/sample_models.R")
+source("~/Projects:Codes/VaR-CoCoBO/thompson_svb.R")
 
 library(tidyr)
 library(GA)
@@ -826,3 +826,69 @@ stress_test_results <- run_stress_test()
 cat("\n##################################################\n")
 cat("STRESS TEST COMPLETED!\n")
 cat("##################################################\n")
+
+
+############################################################
+# RE-RUN GA ONLY FOR EACH TRIAL — RECORD OBJ EVAL COUNTS
+############################################################
+
+library(GA)
+
+ga_eval_results <- data.frame(
+  trial_id = integer(),
+  ga_evals = integer(),
+  ga_best_coverage = numeric(),
+  ga_time_sec = numeric()
+)
+
+n_trials          <- 5
+perturbation_rate <- 0.1
+n_instances       <- 10
+
+for (trial_id in 1:n_trials) {
+  
+  cat("\n==============================================\n")
+  cat("GA TRIAL", trial_id, "\n")
+  cat("==============================================\n")
+  
+  # Same perturbed demand as stress test
+  perturbed_demand <- perturb_demand_data(population, perturbation_rate, seed = trial_id * 100)
+  
+  ga_coverages <- numeric(n_instances)
+  ga_evals     <- numeric(n_instances)
+  
+  for (ga_inst in 1:n_instances) {
+    
+    ga_seed <- trial_id * 1000 + ga_inst
+    eval_count <- 0L
+    
+    fitness_ga <- function(x) {
+      eval_count <<- eval_count + 1L
+      if (sum(x) != max_facilities) return(-1e9)
+      mclp(x, pop = perturbed_demand)$coverage
+    }
+    
+    set.seed(ga_seed)
+    
+    ga_out <- ga(
+      type       = "binary",
+      fitness    = fitness_ga,
+      nBits      = n_vars,
+      monitor    = FALSE
+    )
+    
+    ga_coverages[ga_inst] <- ga_out@fitnessValue
+    ga_evals[ga_inst]     <- eval_count
+    
+    cat(sprintf("  Instance %2d | Coverage: %.0f | Evals: %d\n",
+                ga_inst, ga_out@fitnessValue, eval_count))
+  }
+  
+  cat(sprintf("Trial %d SUMMARY | Mean: %.0f (%.2f%%) | Std: %.2f%% | Mean evals: %.1f\n",
+              trial_id,
+              mean(ga_coverages),
+              100 * mean(ga_coverages) / sum(population),
+              100 * sd(ga_coverages) / sum(population),
+              mean(ga_evals)))
+}
+

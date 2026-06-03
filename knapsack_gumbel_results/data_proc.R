@@ -396,26 +396,40 @@ ggsave(
 
 #---------------------TIME-----------------------------------
 
-make_latex_table <- function(all_results) {
+make_latex_table <- function(all_results, num_instances = 10) {
   tab <- bind_rows(lapply(names(all_results), function(n) {
     t <- all_results[[n]]$summary_table
     t$n_ini <- n
     t
   }))
   
-  tab$runtime_min <- tab$runtime_mean / 60
-  tab$runtime_sd_min <- tab$runtime_sd / 60
+  tab$runtime_min    <- tab$runtime_mean / 60
+  tab$runtime_sd_min <- tab$runtime_sd   / 60
+  
+  # Recover SD from the stored CI bounds:
+  # CI was built as: mean ± qt(0.975, df = num_instances-1) * sd / sqrt(num_instances)
+  tab$best_obj_sd <- (tab$best_obj_upper - tab$best_obj_mean) /
+    qt(0.975, df = num_instances - 1) * sqrt(num_instances)
   
   tab2 <- tab %>%
-    select( n_ini,
+    select(
+      n_ini,
       best_obj_mean,
-      best_obj_lower,
-      best_obj_upper,
+      best_obj_sd,
       runtime_min,
       runtime_sd_min
     )
   
-  print(xtable::xtable(tab2, digits = 3), include.rownames = FALSE)
+  colnames(tab2) <- c("$N_0$", "Best Obj.\\ Mean", "Best Obj.\\ SD",
+                      "Runtime (min)", "Runtime SD (min)")
+  
+  print(
+    xtable::xtable(tab2, digits = 3,
+                   caption = "Best feasible objective and runtime summary.",
+                   label   = "tab:results"),
+    include.rownames           = FALSE,
+    sanitize.colnames.function = identity  # preserves LaTeX in header
+  )
 }
 
 make_latex_table(all_results)

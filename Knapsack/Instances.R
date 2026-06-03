@@ -19,8 +19,8 @@
 # LOAD Functions and Libraries
 # ---------------------------------------------------------
 
-source("~/Projects:Codes/P3Compute/sample_models.R")
-source("~/Projects:Codes/P3Compute/thompson_svb.R")
+source("~/Projects:Codes/VaR-CoCoBO/sample_models.R")
+source("~/Projects:Codes/VaR-CoCoBO/thompson_svb.R")
 library(GA)
 library(psych)
 library(lpSolve)
@@ -361,11 +361,17 @@ run_single_experiment <- function(n_init, instance_id, n_vars) {
     constr <- knapsack_res$constraint
     limit <- knapsack_res$limit
     
-    for (j in seq_len(n_vars)) {
-      # Penalize only violated constraints
-      violations <- pmin(0, constr[j])
-      penalty <- -violations  # positive if constraint violated
-      score[j] <- theta_current[j] + g[j] + lambda * penalty
+    cumsum_weight <- 0
+    
+    for (j in 1:n_vars) {
+      if (x_theta_current[j] == 1) {
+        projected_weight <- cumsum_weight + weights[j]
+        penalty <- max(0, projected_weight - W)
+        score[j] <- theta_current[j] + g[j] - lambda * penalty
+        cumsum_weight <- projected_weight
+      } else {
+        score[j] <- theta_current[j] + g[j]
+      }
     }
     cat("Score:", score, "\n")
     # browser()

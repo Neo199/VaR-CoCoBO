@@ -13,8 +13,8 @@
 # LOAD Functions and Libraries
 # ---------------------------------------------------------
 
-source("~/Projects:Codes/P3Compute/sample_models.R")
-source("~/Projects:Codes/P3Compute/thompson_svb.R")
+source("~/Projects:Codes/VaR-CoCoBO/sample_models.R")
+source("~/Projects:Codes/VaR-CoCoBO/thompson_svb.R")
 
 library(tidyr)
 library(GA)
@@ -591,3 +591,82 @@ metadata <- list(
 
 save(metadata,
         file = file.path(results_dir, paste0("metadata_", run_id, ".RData")))
+
+library(GA)
+
+# ---------------------------------------------------------
+# GLOBAL COUNTER FOR FITNESS EVALUATIONS
+# ---------------------------------------------------------
+objective_counter <<- 0
+
+# ---------------------------------------------------------
+# Fitness function for GA (binary LSCP)
+# ---------------------------------------------------------
+lscp_fitness <- function(x) {
+  
+  # Count every evaluation
+  objective_counter <<- objective_counter + 1
+  
+  x <- round(x)   # enforce binary (0/1)
+  
+  res <- lscp(x)  # your LSCP function from earlier
+  
+  obj  <- res$fn
+  cons <- res$constraint
+  
+  # Penalty: number of uncovered demand points × large constant
+  penalty <- sum(cons > 0) * 1000
+  
+  # GA maximizes → return negative penalized objective
+  return(-(obj + penalty))
+}
+
+# ---------------------------------------------------------
+# RUN GA WITH DEFAULTS + EARLY STOP (no improvement for 40 generations)
+# ---------------------------------------------------------
+
+ga_start_time <- Sys.time()
+
+ga_LSCP <- ga(
+  type    = "binary",
+  fitness = lscp_fitness,
+  nBits   = n_vars,
+  run     = 100       # stop if no improvement for 40 generations
+)
+
+ga_end_time <- Sys.time()
+ga_time_seconds <- as.numeric(difftime(ga_end_time, ga_start_time, units = "secs"))
+
+
+# ---------------------------------------------------------
+# RESULTS
+# ---------------------------------------------------------
+
+ga_best_solution <- ga_LSCP@solution[1, ]
+ga_best_value    <- -ga_LSCP@fitnessValue
+
+cat("\n====== GA LSCP RESULTS ======\n")
+cat("Best number of facilities:", ga_best_value, "\n")
+cat("Selected facilities (0/1):\n")
+print(ga_best_solution)
+
+# Optional: feasibility check
+coverage_final <- as.vector(A %*% ga_best_solution)
+cat("\nDemand points covered:", sum(coverage_final >= 1), "of", nrow(A), "\n")
+cat("Feasible:", all(coverage_final >= 1), "\n")
+
+# ---------------------------------------------------------
+# FITNESS EVALUATION COUNT
+# ---------------------------------------------------------
+
+cat("\n===== Fitness Evaluations =====\n")
+cat("Counted via fitness():   ", objective_counter, "\n")
+
+
+# ---------------------------------------------------------
+# TIME TAKEN
+# ---------------------------------------------------------
+
+cat("\n===== GA Runtime =====\n")
+cat("Time taken (seconds): ", ga_time_seconds, "\n")
+cat("Time taken (minutes): ", ga_time_seconds / 60, "\n")

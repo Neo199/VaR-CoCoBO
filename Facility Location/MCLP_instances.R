@@ -13,8 +13,8 @@
 # LOAD Functions and Libraries
 # ---------------------------------------------------------
 
-source("~/Projects:Codes/P3Compute/sample_models.R")
-source("~/Projects:Codes/P3Compute/thompson_svb.R")
+source("~/Projects:Codes/VaR-CoCoBO/sample_models.R")
+source("~/Projects:Codes/VaR-CoCoBO/thompson_svb.R")
 
 library(tidyr)
 library(GA)
@@ -558,4 +558,130 @@ print(latex_table,
       caption.placement = "top",
       booktabs = TRUE,
       sanitize.text.function = function(x){x})  # Preserve LaTeX commands like \%
+
+
+############################################################
+# GA FOR MCLP — INDEPENDENT VERIFICATION + EVAL COUNTER
+############################################################
+
+library(GA)
+
+cat("\n==============================================\n")
+cat("Running GA for MCLP (Independent Check)\n")
+cat("==============================================\n")
+
+# ---------------------------------------------------------
+# GLOBAL EVALUATION COUNTER
+# ---------------------------------------------------------
+ga_eval_count <<- 0
+
+# ---------------------------------------------------------
+# GA FITNESS FUNCTION
+# ---------------------------------------------------------
+ga_mclp_fitness <- function(x) {
+  
+  # Count evaluations
+  ga_eval_count <<- ga_eval_count + 1
+  
+  # Enforce binary chromosome
+  x <- round(x)
+  
+  # Evaluate the true MCLP model
+  res <- mclp(x)
+  
+  # Penalize violating max_facilities
+  penalty <- 0
+  if (res$constraint > 0) {
+    penalty <- -1e6 * res$constraint   # strong penalty for > max facilities
+  }
+  
+  # MAXIMISE covered population
+  return(res$coverage + penalty)
+}
+
+# ---------------------------------------------------------
+# RUN GA (default settings except nBits)
+# ---------------------------------------------------------
+ga_start <- Sys.time()
+
+ga_mclp <- ga(
+  type    = "binary",
+  fitness = ga_mclp_fitness,
+  nBits   = n_vars
+  # run     = 100         # early stopping if no improvement for 40 generations
+)
+
+ga_end <- Sys.time()
+ga_time_sec <- as.numeric(difftime(ga_end, ga_start, units = "secs"))
+
+# ---------------------------------------------------------
+# RESULTS
+# ---------------------------------------------------------
+ga_sol <- round(ga_mclp@solution[1, ])
+ga_obj <- mclp(ga_sol)$coverage
+
+cat("\n========== GA RESULTS ==========\n")
+cat("Best GA coverage: ", ga_obj, "\n")
+cat("Facilities selected (0/1):\n")
+print(ga_sol)
+cat("Total facilities: ", sum(ga_sol), "\n")
+
+cat("\n========== GA EVALUATION COUNT ==========\n")
+cat("Number of objective evaluations: ", ga_eval_count, "\n")
+cat("GA runtime (seconds): ", ga_time_sec, "\n")
+cat("GA runtime (minutes): ", ga_time_sec / 60, "\n")
+
+
+# ---------------------------------------------------------
+# GA FOR MCLP — 20 INSTANCES, CONSOLE OUTPUT ONLY
+# ---------------------------------------------------------
+
+library(GA)
+
+# Parameters (matching BO setup)
+n_instances  <- 20
+evalBudget   <- 250
+
+all_coverage <- numeric(n_instances)
+all_evals    <- numeric(n_instances)
+
+for (inst in seq_len(n_instances)) {
+  
+  seed <- inst + 100
+  set.seed(seed)
+  
+  eval_count <- 0L
+  
+  fitness_fn <- function(x) {
+    eval_count <<- eval_count + 1L
+    x   <- round(x)
+    res <- mclp(x)
+    penalty <- if (res$constraint > 0) -1e6 * res$constraint else 0
+    res$coverage + penalty
+  }
+  
+  ga_res <- ga(
+    type    = "binary",
+    fitness = fitness_fn,
+    nBits   = n_vars,
+    monitor = FALSE
+  )
+  
+  best_sol      <- round(ga_res@solution[1, ])
+  best_coverage <- mclp(best_sol)$coverage
+  best_pct      <- 100 * best_coverage / sum(population)
+  
+  all_coverage[inst] <- best_coverage
+  all_evals[inst]    <- eval_count
+  
+  cat(sprintf("Instance %2d | Coverage: %7.0f (%5.2f%%) | Evals: %d | Facilities: %s\n",
+              inst, best_coverage, best_pct, eval_count, paste(best_sol, collapse = "")))
+}
+
+cat("\n--- SUMMARY ---\n")
+cat(sprintf("Mean coverage : %.0f (%.2f%%)\n", mean(all_coverage), 100 * mean(all_coverage) / sum(population)))
+cat(sprintf("Std  coverage : %.0f\n", sd(all_coverage)))
+cat(sprintf("Min  coverage : %.0f\n", min(all_coverage)))
+cat(sprintf("Max  coverage : %.0f\n", max(all_coverage)))
+cat(sprintf("Mean evals    : %.1f\n", mean(all_evals)))
 

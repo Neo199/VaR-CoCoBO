@@ -17,8 +17,8 @@
 # LOAD Functions and Libraries
 # ---------------------------------------------------------
 
-source("~/Projects:Codes/P3Compute/sample_models.R")
-source("~/Projects:Codes/P3Compute/thompson_svb.R")
+source("~/Projects:Codes/VaR-CoCoBO/sample_models.R")
+source("~/Projects:Codes/VaR-CoCoBO/thompson_svb.R")
 library(GA)
 library(psych)
 library(lpSolve)
@@ -296,7 +296,8 @@ y <- y_vals
 
 #Create a dataframe
 data <- data.frame(y=y , X)
-data_history <- data_frame(y=y, x = x_vals)
+data_history <- data.frame(y=y, x = x_vals)
+colnames(data_history) <- c("y", paste0("X", 1:n_vars))
 
 # Initialize a data frame to store iteration results
 optim_result <- matrix(0, evalBudget, n_vars)
@@ -368,11 +369,17 @@ for (t in 1:evalBudget) {
   constr <- knapsack_res$constraint
   limit <- knapsack_res$limit
   
-  for (j in seq_len(n_vars)) {
-    # Penalize only violated constraints
-    violations <- pmin(0, constr[j])
-    penalty <- -violations  # positive if constraint violated
-    score[j] <- theta_current[j] + g[j] + lambda * penalty
+  cumsum_weight <- 0
+  
+  for (j in 1:n_vars) {
+    if (x_theta_current[j] == 1) {
+      projected_weight <- cumsum_weight + weights[j]
+      penalty <- max(0, projected_weight - W)
+      score[j] <- theta_current[j] + g[j] - lambda * penalty
+      cumsum_weight <- projected_weight
+    } else {
+      score[j] <- theta_current[j] + g[j]
+    }
   }
   cat("Score:", score, "\n")
   
@@ -384,7 +391,7 @@ for (t in 1:evalBudget) {
   
   # Initialize constraint tracker
   constraint_satisfied <- FALSE
-  
+  browser()
   # Start flipping bits in order of rank
   for (k in seq_along(idx)) {
     x_new[idx[k]] <- 1
@@ -406,8 +413,8 @@ for (t in 1:evalBudget) {
   y_new <- res$fn
     
   # Save history
-  data_hnew<- data.frame(y = y_new, x_new)
-  data <- rbind(data_history, data_hnew)
+  data_hnew<- data.frame(y = y_new, t(x_new))
+  data_history <- rbind(data_history, data_hnew)
   x_history[[t]] <- x_theta_current
   y_history[t] <- y_new
   feasible[t] <- ifelse(res$total_constraint <= res$limit, 1, 0)
@@ -422,6 +429,7 @@ for (t in 1:evalBudget) {
   x_new <- matrix(x_new, nrow = 1, ncol = n_vars)
   x_new_in_comb <- order_effects(x_new, order)
   x_new_in <- x_new_in_comb$xTrain_in
+  
   
   data_new <- data.frame(y = y_new, x_new_in)
   data <- rbind(data, data_new)
