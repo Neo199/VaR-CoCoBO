@@ -3,7 +3,7 @@
 # Approaching the constraints by PRing them before sampling and adding gumbel trick
 # GA (genetic algorithm) for comparison and true answer
 # MINIMISATION PROBELM
-# This code is for the CONTAMINATION test problem in BOCS
+# This code is for the CONTAMINATION test problem.
 
 # Author: Niyati Seth
 # Date:  October 2025
@@ -11,8 +11,8 @@
 # LOAD Functions and Libraries
 # ---------------------------------------------------------
 
-source("~/Projects:Codes/P3Compute/sample_models.R")
-source("~/Projects:Codes/P3Compute/thompson_svb.R")
+source("~/Projects:Codes/VaR-CoCoBO/sample_models.R")
+source("~/Projects:Codes/VaR-CoCoBO/thompson_svb.R")
 library(GA)
 library(psych)
 library(lpSolve)
@@ -25,6 +25,8 @@ library(GPfit)
 library(rstanarm)
 library(rstan)
 library(bayesplot)
+library(sparsevb)
+library(selectiveInference)
 
 set.seed(1)
 
@@ -246,6 +248,7 @@ res <- Contamination(x_vals, 100)
 x_vals
 num_inputs <- nrow(x_vals)
 y_vals <- numeric(num_inputs)
+feasible <- logical(num_inputs)
 
 for (i in seq_len(num_inputs)) {
   res <- Contamination(x_vals[i, ], 100, seed = 10)
@@ -288,6 +291,12 @@ inter_combos <- xTrain_in_comb$combos
 X <- xTrain_in
 y <- y_vals
 
+x_history <- list()
+y_history <- numeric(evalBudget)
+data_feasible <- rep(NA, evalBudget)
+data_feasible[1:n_init] <- as.logical(feasible)
+total_violation <- rep(NA, evalBudget)
+
 #Create a dataframe
 data <- data.frame(y=y , X)
 data_history <- data.frame(y = y, x_vals, feasibility = data_feasible)
@@ -301,13 +310,10 @@ theta_ini <- rep(0.5, ncol(xTrain))
 costs <- rep(1, n_vars)
 n_vars <- length(costs)
 theta_current <- rep(0.5, n_vars)
-x_history <- list()
-y_history <- numeric(evalBudget)
-data_feasible <- rep(NA, evalBudget)
-data_feasible[1:n_init] <- as.logical(feasible)
-total_violation <- rep(NA, evalBudget)
+
 
 vb_data <- data[,-1]
+
 # Initialize a data frame to store iteration results
 prbocs_vb_result <- matrix(0, evalBudget, n_vars)
 
@@ -454,26 +460,260 @@ test_feasible <- function(x) {
 
 for (i in 1:length(x_history)) test_feasible(x_history[[i]])
 
-# # ---------------------------------------------------------
-# # Penalised wrapper used by GA 
-# # ---------------------------------------------------------
-# contamination_prob_lang <- function(x_mat, n_samples, gamma = 10, seed = 10) {
-#   if (is.vector(x_mat)) x_mat <- matrix(x_mat, nrow = 1)
-#   num_inputs <- nrow(x_mat)
-#   out <- numeric(num_inputs)
-#   
-#   for (i in seq_len(num_inputs)) {
-#     contamination_result <- Contamination(x_mat[i, ], n_samples, seed = seed)
-#     cost <- contamination_result$fn
-#     constraint <- contamination_result$constraint    # proportion SAFE
-#     limit_vec <- contamination_result$limit
-#    
-#     # MINIMISATION objective: add penalty proportional to shortfall
-#     out[i] <- cost - sum(gamma * constraint)
-#   }
-#   return(out)
-# }
-# 
+# ---------------------------------------------------------
+# ABLATION 1: Thompson sampling only, NO Gumbel noise
+# This demonstrates that posterior randomness alone (hat{theta}_j
+# already being a sample) is insufficient for exploration.
+# Score: s_j = hat{theta}_j - lambda * penalty   (no g_j term)
+# ---------------------------------------------------------
+
+set.seed(seed)
+
+# Re-initialise from the same starting data
+xTrain_ab1       <- x_vals
+yTrain_ab1       <- y_vals
+xTrain_in_ab1    <- order_effects(xTrain_ab1, order)$xTrain_in
+data_ab1         <- data.frame(y = yTrain_ab1, xTrain_in_ab1)
+vb_data_ab1      <- data_ab1[, -1]
+dup_ab1          <- which(duplicated(as.list(vb_data_ab1)))
+data_red_ab1     <- vb_data_ab1[, !duplicated(as.list(vb_data_ab1))]
+vb_ab1           <- svb.fit(X = as.matrix(data_red_ab1), Y = data_ab1[, 1],
+                            family = "linear", slab = "laplace", intercept = TRUE)
+
+x_history_ab1    <- list()
+y_history_ab1    <- numeric(n_iter)
+feasible_ab1     <- rep(NA, n_iter)
+theta_ab1        <- rep(0.5, n_vars)
+
+for (t in 1:n_iter) {
+  cat(sprintf("[Ablation 1 – no Gumbel] Iteration %d\n", t))
+  
+  stat_model_ab1 <- function(theta)
+    thompson_sam_svb(theta, vb_model = vb_ab1,
+                     duplicate_cols = dup_ab1,
+                     vb_data = vb_data_ab1, order = order)
+  
+  opt_ab1    <- optim(theta_ab1, stat_model_ab1,
+                      method = "L-BFGS-B", lower = 1e-8, upper = 0.999)
+  theta_ab1  <- opt_ab1$par          # posterior-optimised theta (the "Thompson sample")
+  
+  # ---- KEY DIFFERENCE: no Gumbel draw; discretise directly from theta_ab1 ----
+  x_ab1 <- rbinom(n_vars, 1, theta_ab1)
+  
+  # Constraint-greedy repair (same as main loop)
+  contam_ab1   <- Contamination(x_ab1, 100)
+  constr_ab1   <- contam_ab1$constraint
+  limit_ab1    <- contam_ab1$limit
+  viol_ab1     <- pmax(0, limit_ab1 - constr_ab1)
+  
+  score_ab1 <- theta_ab1 - lambda * sum(viol_ab1)   # no g_j term
+  idx_ab1   <- order(score_ab1, decreasing = TRUE)
+  
+  x_new_ab1 <- rep(0, n_vars)
+  for (k in seq_along(idx_ab1)) {
+    ct <- Contamination(x_new_ab1, 100)
+    if (ct$constraint[idx_ab1[k]] < ct$limit[idx_ab1[k]])
+      x_new_ab1[idx_ab1[k]] <- 1
+  }
+  
+  res_ab1            <- Contamination(x_new_ab1, 100)
+  y_history_ab1[t]   <- res_ab1$fn
+  feasible_ab1[t]    <- all(res_ab1$constraint > res_ab1$limit)
+  x_history_ab1[[t]] <- x_new_ab1
+  
+  cat(sprintf("  x = %s | cost = %.0f | feasible = %s\n",
+              paste(x_new_ab1, collapse = ""),
+              res_ab1$fn, feasible_ab1[t]))
+  
+  # Refit SVB on augmented data
+  x_new_ab1_mat    <- matrix(x_new_ab1, nrow = 1)
+  x_new_ab1_in     <- order_effects(x_new_ab1_mat, order)$xTrain_in
+  data_ab1         <- rbind(data_ab1, data.frame(y = res_ab1$fn, x_new_ab1_in))
+  vb_data_ab1      <- data_ab1[, -1]
+  dup_ab1          <- which(duplicated(as.list(vb_data_ab1)))
+  data_red_ab1     <- vb_data_ab1[, !duplicated(as.list(vb_data_ab1))]
+  vb_ab1           <- svb.fit(X = as.matrix(data_red_ab1), Y = data_ab1[, 1],
+                              family = "linear", slab = "laplace", intercept = TRUE)
+}
+
+
+# ---------------------------------------------------------
+# ABLATION 2: Gumbel noise only, using E[theta_j] = mu_j
+# (posterior mean) instead of a Thompson sample.
+# This shows the contribution of Gumbel independently of
+# posterior uncertainty.
+# Score: s_j = mu_j + g_j - lambda * penalty
+# ---------------------------------------------------------
+
+set.seed(seed)
+
+xTrain_ab2       <- x_vals
+yTrain_ab2       <- y_vals
+xTrain_in_ab2    <- order_effects(xTrain_ab2, order)$xTrain_in
+data_ab2         <- data.frame(y = yTrain_ab2, xTrain_in_ab2)
+vb_data_ab2      <- data_ab2[, -1]
+dup_ab2          <- which(duplicated(as.list(vb_data_ab2)))
+data_red_ab2     <- vb_data_ab2[, !duplicated(as.list(vb_data_ab2))]
+vb_ab2           <- svb.fit(X = as.matrix(data_red_ab2), Y = data_ab2[, 1],
+                            family = "linear", slab = "laplace", intercept = TRUE)
+
+x_history_ab2    <- list()
+y_history_ab2    <- numeric(n_iter)
+feasible_ab2     <- rep(NA, n_iter)
+# theta_mean_ab2 is re-extracted from the fitted model each iteration (see below)
+
+for (t in 1:n_iter) {
+  cat(sprintf("[Ablation 2 – Gumbel + mean] Iteration %d\n", t))
+  
+  # ---- KEY DIFFERENCE: use posterior mean mu directly; no Thompson optimisation ----
+  # Reconstruct the full mu vector (matching the duplicate-column logic in main loop)
+  full_mu_ab2 <- numeric(ncol(vb_data_ab2))
+  kept_ab2    <- setdiff(seq_along(full_mu_ab2), dup_ab2)
+  full_mu_ab2[kept_ab2] <- vb_ab2$mu
+  for (col in dup_ab2) {
+    dup_col_vals <- vb_data_ab2[, col]
+    orig_col     <- which(apply(vb_data_ab2, 2,
+                                function(x) all(x == dup_col_vals)) &
+                            !(seq_along(vb_data_ab2) %in% dup_ab2))
+    if (length(orig_col) == 1) full_mu_ab2[col] <- full_mu_ab2[orig_col]
+  }
+  
+  # mu_j corresponds to the first n_vars entries (the main-effect coefficients)
+  mu_j <- full_mu_ab2[seq_len(n_vars)]
+  # Rescale to (0,1) via sigmoid so it is a valid Bernoulli probability
+  theta_mean_ab2 <- 1 / (1 + exp(-mu_j))
+  
+  # Gumbel draw (same as main loop)
+  g_ab2  <- -log(-log(runif(n_vars)))
+  
+  # Constraint penalty
+  x_tmp_ab2  <- rbinom(n_vars, 1, theta_mean_ab2)
+  cr_ab2     <- Contamination(x_tmp_ab2, 100)
+  viol_ab2   <- pmax(0, cr_ab2$limit - cr_ab2$constraint)
+  
+  score_ab2 <- theta_mean_ab2 + g_ab2 - lambda * sum(viol_ab2)
+  idx_ab2   <- order(score_ab2, decreasing = TRUE)
+  
+  # Greedy repair
+  x_new_ab2 <- rep(0, n_vars)
+  for (k in seq_along(idx_ab2)) {
+    ct <- Contamination(x_new_ab2, 100)
+    if (ct$constraint[idx_ab2[k]] < ct$limit[idx_ab2[k]])
+      x_new_ab2[idx_ab2[k]] <- 1
+  }
+  
+  res_ab2            <- Contamination(x_new_ab2, 100)
+  y_history_ab2[t]   <- res_ab2$fn
+  feasible_ab2[t]    <- all(res_ab2$constraint > res_ab2$limit)
+  x_history_ab2[[t]] <- x_new_ab2
+  
+  cat(sprintf("  x = %s | cost = %.0f | feasible = %s\n",
+              paste(x_new_ab2, collapse = ""),
+              res_ab2$fn, feasible_ab2[t]))
+  
+  # Refit SVB
+  x_new_ab2_mat  <- matrix(x_new_ab2, nrow = 1)
+  x_new_ab2_in   <- order_effects(x_new_ab2_mat, order)$xTrain_in
+  data_ab2       <- rbind(data_ab2, data.frame(y = res_ab2$fn, x_new_ab2_in))
+  vb_data_ab2    <- data_ab2[, -1]
+  dup_ab2        <- which(duplicated(as.list(vb_data_ab2)))
+  data_red_ab2   <- vb_data_ab2[, !duplicated(as.list(vb_data_ab2))]
+  vb_ab2         <- svb.fit(X = as.matrix(data_red_ab2), Y = data_ab2[, 1],
+                            family = "linear", slab = "laplace", intercept = TRUE)
+}
+
+
+# ---------------------------------------------------------
+# COMPARISON PLOTS – all three conditions
+# ---------------------------------------------------------
+
+iters <- seq_len(n_iter)
+
+# Cumulative best feasible cost per condition
+cum_best <- function(y, feas) {
+  best <- rep(NA, length(y))
+  b    <- Inf
+  for (i in seq_along(y)) {
+    if (!is.na(feas[i]) && feas[i] && y[i] < b) b <- y[i]
+    best[i] <- b
+  }
+  best
+}
+
+df_compare <- data.frame(
+  iter      = rep(iters, 3),
+  y         = c(y_history[seq_len(n_iter)],
+                y_history_ab1,
+                y_history_ab2),
+  feasible  = c(data_feasible[n_init + seq_len(n_iter)],
+                feasible_ab1,
+                feasible_ab2),
+  cum_best  = c(cum_best(y_history[seq_len(n_iter)],
+                         data_feasible[n_init + seq_len(n_iter)]),
+                cum_best(y_history_ab1, feasible_ab1),
+                cum_best(y_history_ab2, feasible_ab2)),
+  condition = rep(c("Full (Thompson + Gumbel)",
+                    "Ablation 1: Thompson only",
+                    "Ablation 2: Gumbel + E[theta]"),
+                  each = n_iter)
+)
+
+# Optimisation trace
+p_trace <- ggplot(df_compare, aes(x = iter, colour = condition)) +
+  geom_line(aes(y = cum_best), linewidth = 1) +
+  geom_point(aes(y = y, shape = feasible), alpha = 0.5, size = 1.5) +
+  scale_shape_manual(values = c("TRUE" = 16, "FALSE" = 4),
+                     labels = c("TRUE" = "Feasible", "FALSE" = "Infeasible")) +
+  scale_colour_manual(values = c(
+    "Full (Thompson + Gumbel)"     = "#1D9E75",
+    "Ablation 1: Thompson only"    = "#D85A30",
+    "Ablation 2: Gumbel + E[theta]" = "#378ADD"
+  )) +
+  labs(title    = "Contamination: ablation study",
+       subtitle = "Lines = cumulative best feasible cost; points = evaluated cost",
+       x        = "Iteration (post-initialisation)",
+       y        = "Prevention cost",
+       colour   = "Condition",
+       shape    = NULL) +
+  theme_minimal(base_size = 12)
+
+print(p_trace)
+
+# Feasibility rate per condition (rolling 10-iteration window)
+library(zoo)
+df_feas <- df_compare %>%
+  group_by(condition) %>%
+  mutate(feas_rate = rollmean(as.numeric(feasible), k = 10,
+                              fill = NA, align = "right")) %>%
+  ungroup()
+
+p_feas <- ggplot(df_feas, aes(x = iter, y = feas_rate, colour = condition)) +
+  geom_line(linewidth = 1) +
+  scale_colour_manual(values = c(
+    "Full (Thompson + Gumbel)"     = "#1D9E75",
+    "Ablation 1: Thompson only"    = "#D85A30",
+    "Ablation 2: Gumbel + E[theta]" = "#378ADD"
+  )) +
+  labs(title    = "Feasibility rate (rolling 10-iteration window)",
+       x        = "Iteration",
+       y        = "Proportion feasible",
+       colour   = "Condition") +
+  coord_cartesian(ylim = c(0, 1)) +
+  theme_minimal(base_size = 12)
+
+print(p_feas)
+
+# Summary table
+summary_ablation <- df_compare %>%
+  group_by(condition) %>%
+  summarise(
+    feas_rate     = mean(feasible, na.rm = TRUE),
+    best_cost     = min(y[feasible == TRUE], na.rm = TRUE),
+    mean_cost     = mean(y, na.rm = TRUE),
+    .groups       = "drop"
+  )
+print(summary_ablation)
+
 langmodel <- function(x_vals) {
   num_inputs <- nrow(x_vals)
   out <- numeric(num_inputs)

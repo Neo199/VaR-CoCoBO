@@ -15,8 +15,8 @@
 # LOAD Functions and Libraries
 # ---------------------------------------------------------
 
-source("~/Projects:Codes/P3Compute/sample_models.R")
-source("~/Projects:Codes/P3Compute/thompson_svb.R")
+source("~/Projects:Codes/VaR-CoCoBO/sample_models.R")
+source("~/Projects:Codes/VaR-CoCoBO/thompson_svb.R")
 library(GA)
 library(psych)
 library(lpSolve)
@@ -245,216 +245,220 @@ run_single_experiment <- function(instance_id, n_vars, lambda) {
   
   cat("Running instance =", instance_id, "\n")
   
-
   seed <- instance_id + 100
   set.seed(seed)
-  # INITIAL SAMPLES FOR STATISTICAL MODELS
+  
   # ---------------------------------------------------------
-  x_vals <- sample_models(n_init, n_vars)
-  res <- Contamination(x_vals, 100, seed = seed)
-  
-  x_vals
+  # INITIAL SAMPLES (shared across all three conditions)
+  # ---------------------------------------------------------
+  x_vals    <- sample_models(n_init, n_vars)
   num_inputs <- nrow(x_vals)
-  y_vals <- numeric(num_inputs)
-  feasible <- logical(num_inputs)
-  
+  y_vals    <- numeric(num_inputs)
+  feasible  <- logical(num_inputs)
   
   for (i in seq_len(num_inputs)) {
-    res <- Contamination(x_vals[i, ], 100, seed = seed)
-    y_vals[i] <- res$fn
+    res        <- Contamination(x_vals[i, ], 100, seed = seed)
+    y_vals[i]  <- res$fn
     feasible[i] <- all(res$constraint > res$limit)
   }
   
-  y_vals
-  feasible
+  n_init_actual <- nrow(x_vals)
+  n_iter        <- evalBudget - n_init_actual
   
-  # ---------------------------------------------------------
-  # DEFINE TRUE MODEL
-  # ---------------------------------------------------------
-  model <- function(x_vals){
-    Contamination(x_vals, 100, seed)
+  # Helper: build initial SVB data structures from x_vals / y_vals
+  build_svb <- function(xv, yv) {
+    xin       <- order_effects(xv, order)$xTrain_in
+    df        <- data.frame(y = yv, xin)
+    vb_d      <- df[, -1]
+    dup       <- which(duplicated(as.list(vb_d)))
+    red       <- vb_d[, !duplicated(as.list(vb_d))]
+    mdl       <- svb.fit(X = as.matrix(red), Y = yv,
+                         family = "linear", slab = "laplace", intercept = TRUE)
+    list(data = df, vb_data = vb_d, dup = dup, reduced = red, model = mdl)
   }
   
-  # ---------------------------------------------------------
-  # RUN VaR-CoCoBO
-  # ---------------------------------------------------------
+  # Helper: refit SVB after appending one new row
+  refit_svb <- function(df_old, y_new, x_new_vec) {
+    x_new_in  <- order_effects(matrix(x_new_vec, nrow = 1), order)$xTrain_in
+    df_new    <- rbind(df_old, data.frame(y = y_new, x_new_in))
+    vb_d      <- df_new[, -1]
+    dup       <- which(duplicated(as.list(vb_d)))
+    red       <- vb_d[, !duplicated(as.list(vb_d))]
+    mdl       <- svb.fit(X = as.matrix(red), Y = df_new[, 1],
+                         family = "linear", slab = "laplace", intercept = TRUE)
+    list(data = df_new, vb_data = vb_d, dup = dup, reduced = red, model = mdl)
+  }
   
-  n_init <- nrow(x_vals)
-  n_iter <- evalBudget - n_init
-  
-  xTrain <- x_vals
-  yTrain <- y_vals
-  
-  xTrain_in_comb <- order_effects(xTrain, order)
-  xTrain_in <- xTrain_in_comb$xTrain_in
-  inter_combos <- xTrain_in_comb$combos
-  
-  #Setup dataframe for stan_glm training 
-  X <- xTrain_in
-  y <- y_vals
-  
-  #Create a dataframe
-  data <- data.frame(y=y , X)
-  data_feasible <- rep(NA, n_init)
-  data_feasible[1:n_init] <- as.logical(feasible)
-  data_history <- data.frame(y = y, x_vals, feasibility = data_feasible)
-  colnames(data_history) <- c("y", paste0("X", 1:n_vars), "Feasibility")
-  
-  # browser()
-  # Initialize a data frame to store iteration results
-  optim_result <- matrix(0, evalBudget, n_vars)
-  
-  # browser()
-  theta_ini <- rep(0.5, ncol(xTrain))
-  
-  costs <- rep(1, n_vars)
-  theta_current <- rep(0.5, n_vars)
-  x_history <- list()
-  y_history <- numeric(evalBudget)
-  total_violation <- rep(NA, evalBudget)
-  
-  vb_data <- data[,-1]
-  
-  # Find duplicate columns
-  duplicate_cols <- which(duplicated(as.list(vb_data)))
-  
-  # Save the removed columns in a separate data frame
-  removed_columns <- vb_data[, duplicate_cols, drop = FALSE]
-  
-  # Keep only unique columns
-  data_reduced <- vb_data[, !duplicated(as.list(vb_data))]
-  
-  # Prepare data
-  X <- as.matrix(data_reduced)  # Assuming the first column is the response variable
-  Y <- data[, 1]              # Response variable
-  
-  # Fit the variational Bayesian model
-  vb_model <- svb.fit(
-    X = X,
-    Y = Y,
-    family = "linear",     # For linear regression
-    slab = "laplace",      # Default slab prior
-    intercept = TRUE       # Include intercept in the model
-  )
-  runs <- evalBudget-n_init
-  
-  # ---------- Main optimization loop ----------
-  for (t in 1:runs) {
-    print(paste("prbocsvb_iteration_",t))
-    
-    stat_model <- function(theta) {
-      thompson_sam_svb(theta, vb_model = vb_model, duplicate_cols, vb_data, order)
+  # Helper: extract posterior mean as probability vector (length n_vars)
+  extract_mean_prob <- function(vb_model, vb_data, dup) {
+    full_mu <- numeric(ncol(vb_data))
+    kept    <- setdiff(seq_along(full_mu), dup)
+    full_mu[kept] <- vb_model$mu
+    for (col in dup) {
+      dup_vals <- vb_data[, col]
+      orig     <- which(apply(vb_data, 2, function(x) all(x == dup_vals)) &
+                          !(seq_along(vb_data) %in% dup))
+      if (length(orig) == 1) full_mu[col] <- full_mu[orig]
     }
-    
-    # Here you can still optimize theta if desired
-    min_acq <- optim(theta_current, stat_model, method='L-BFGS-B', lower=1e-8, upper=0.999,
-                     control = list(fnscale = -1))
-    expected_val <- min_acq$par
-    cat("expected_val", expected_val, "\n")
-    theta_current <- expected_val
-    
-    # Gumbel noise
-    g <- -log(-log(runif(n_vars)))
-    
-    x_theta_current <- rbinom(n_vars, 1, theta_current)
-    cat("X before constraint", x_theta_current, "\n")
-    
-    # compute per-stage violations for sampled x (violation = pmax(0, limit - constraint))
-    score <- numeric(n_vars)
-    contam_res <- Contamination(x_theta_current, 100, seed)
-    constr <- contam_res$constraint     # proportion SAFE
-    limit <- contam_res$limit           # required safety probability (1-epsilon)
-    violation_sample <- pmax(0, limit - constr)  # positive when unsafe
-    
-    for (j in seq_len(n_vars)) {
-      penalty <- lambda * sum(violation_sample)      # penalty per-coordinate: how much stage falls short of required safety
-      # subtract penalty: higher penalty reduces score
-      score[j] <- theta_current[j] + g[j] - penalty
-    }
-    cat("Score:", score, "\n")
-    # browser()
-    # Rank indices
-    idx <- order(score, decreasing = TRUE)
-    
-    # Initialize binary vector
+    # first n_vars entries are main-effect coefficients; sigmoid → probabilities
+    1 / (1 + exp(-full_mu[seq_len(n_vars)]))
+  }
+  
+  # Helper: greedy constraint repair given a score vector
+  greedy_repair <- function(score, seed_val) {
+    idx   <- order(score, decreasing = TRUE)
     x_new <- rep(0, n_vars)
-    
     for (k in seq_along(idx)) {
-      # Check if this stage is currently unsafe
-      contam_try <- Contamination(x_new, 100, seed = seed)
-      constr_try <- contam_try$constraint
-      limit_try <- contam_try$limit
-      
-      if (constr_try[idx[k]] < limit_try[idx[k]]) {
-        # Stage k is unsafe → apply prevention
+      ct <- Contamination(x_new, 100, seed = seed_val)
+      if (ct$constraint[idx[k]] < ct$limit[idx[k]])
         x_new[idx[k]] <- 1
-      }
-      # else stage is already safe → leave prevention off
     }
-    
-    
-    # Evaluate contamination for x_new
-    res <- Contamination(x_new,100, seed)
-    y_new <- res$fn
-    x_new <- matrix(x_new, nrow = 1)
-    data_feasible[t + n_init] <- as.logical(all(res$constraint > res$limit))
-    
-    # Save history
-    data_hnew <- data.frame(y = y_new, x_new, feasibility = data_feasible[t + n_init])
-    colnames(data_hnew) <- colnames(data_history)
-    data_history <- rbind(data_history, data_hnew)
-    
-    x_history[[t]] <- x_theta_current
-    y_history[t] <- y_new
-
-    cat(sprintf("Iteration %d: x = %s, y = %.3f\n", t, paste(x_new, collapse=""), y_new))
-    
-    # append new observation to dataset (include interactions)
-    x_new <- matrix(x_new, nrow = 1, ncol = n_vars)
-    x_new_in_comb <- order_effects(x_new, order)
-    x_new_in <- x_new_in_comb$xTrain_in
-    
-    data_new <- data.frame(y = y_new, x_new_in)
-    data <- rbind(data, data_new)
-    
-    theta_current <- expected_val
-
-    # prepare for next SVB fit: rebuild design and detect duplicates
-    vb_data <- data[,-1]
-    
-    # Find duplicate columns
-    duplicate_cols <- which(duplicated(as.list(vb_data)))
-    
-    # Save the removed columns in a separate data frame
-    removed_columns <- vb_data[, duplicate_cols, drop = FALSE]
-    
-    # Keep only unique columns
-    data_reduced <- vb_data[, !duplicated(as.list(vb_data))]
-    
-    # Prepare data
-    X <- as.matrix(data_reduced)  # Assuming the first column is the response variable
-    Y <- data[, 1]              # Response variable
-    
-    # Fit the variational Bayesian model
-    vb_model <- svb.fit(
-      X = X,
-      Y = Y,
-      family = "linear",     # For linear regression
-      slab = "laplace",      # Default slab prior
-      intercept = TRUE       # Include intercept in the model
-    )
-    
+    x_new
   }
   
-  # Save whatever you want
-  result_list <- list(
-    n_init = n_init,
-    instance = instance_id,
-    lambda = lambda,
-    data = data_history
-  )
+  # ---------------------------------------------------------
+  # INITIALISE ALL THREE CONDITIONS FROM THE SAME STARTING DATA
+  # ---------------------------------------------------------
+  s_full <- build_svb(x_vals, y_vals)
+  s_ab1  <- build_svb(x_vals, y_vals)   # Ablation 1: Thompson only, no Gumbel
+  s_ab2  <- build_svb(x_vals, y_vals)   # Ablation 2: Gumbel + E[theta], no Thompson
   
-  return(result_list)
+  # Shared data_history (feasibility fixed-length from the start)
+  data_feasible_full <- rep(NA, evalBudget)
+  data_feasible_ab1  <- rep(NA, evalBudget)
+  data_feasible_ab2  <- rep(NA, evalBudget)
+  data_feasible_full[1:n_init_actual] <- as.logical(feasible)
+  data_feasible_ab1 [1:n_init_actual] <- as.logical(feasible)
+  data_feasible_ab2 [1:n_init_actual] <- as.logical(feasible)
+  
+  data_history_full <- data.frame(y = y_vals, x_vals,
+                                  feasibility = data_feasible_full[1:n_init_actual])
+  data_history_ab1  <- data_history_full
+  data_history_ab2  <- data_history_full
+  colnames(data_history_full) <- c("y", paste0("X", 1:n_vars), "Feasibility")
+  colnames(data_history_ab1)  <- colnames(data_history_full)
+  colnames(data_history_ab2)  <- colnames(data_history_full)
+  
+  theta_full <- rep(0.5, n_vars)
+  theta_ab1  <- rep(0.5, n_vars)
+  
+  y_history_full <- numeric(n_iter)
+  y_history_ab1  <- numeric(n_iter)
+  y_history_ab2  <- numeric(n_iter)
+  
+  # ---------------------------------------------------------
+  # MAIN LOOP — all three conditions run each iteration
+  # ---------------------------------------------------------
+  for (t in 1:n_iter) {
+    cat(sprintf("Instance %d | lambda %.1f | iter %d\n", instance_id, lambda, t))
+    
+    # ── FULL METHOD (Thompson + Gumbel) ──────────────────────
+    stat_model_full <- function(theta)
+      thompson_sam_svb(theta, s_full$model, s_full$dup, s_full$vb_data, order)
+    
+    opt_full   <- optim(theta_full, stat_model_full, method = "L-BFGS-B",
+                        lower = 1e-8, upper = 0.999,
+                        control = list(fnscale = -1))
+    theta_full <- opt_full$par
+    
+    g_full         <- -log(-log(runif(n_vars)))
+    x_tmp_full     <- rbinom(n_vars, 1, theta_full)
+    cr_full        <- Contamination(x_tmp_full, 100, seed)
+    viol_full      <- pmax(0, cr_full$limit - cr_full$constraint)
+    score_full     <- theta_full + g_full - lambda * sum(viol_full)
+    x_new_full     <- greedy_repair(score_full, seed)
+    res_full       <- Contamination(x_new_full, 100, seed)
+    y_new_full     <- res_full$fn
+    feas_full      <- all(res_full$constraint > res_full$limit)
+    
+    data_feasible_full[t + n_init_actual] <- as.logical(feas_full)
+    y_history_full[t] <- y_new_full
+    dh_full <- data.frame(y = y_new_full,
+                          matrix(x_new_full, nrow = 1),
+                          feasibility = feas_full)
+    colnames(dh_full) <- colnames(data_history_full)
+    data_history_full <- rbind(data_history_full, dh_full)
+    s_full <- refit_svb(s_full$data, y_new_full, x_new_full)
+    
+    # ── ABLATION 1: Thompson only, no Gumbel ─────────────────
+    # g_j = 0; only randomness is the posterior sample theta_ab1
+    stat_model_ab1 <- function(theta)
+      thompson_sam_svb(theta, s_ab1$model, s_ab1$dup, s_ab1$vb_data, order)
+    
+    opt_ab1  <- optim(theta_ab1, stat_model_ab1, method = "L-BFGS-B",
+                      lower = 1e-8, upper = 0.999,
+                      control = list(fnscale = -1))
+    theta_ab1 <- opt_ab1$par
+    
+    # no Gumbel draw — score uses theta directly
+    x_tmp_ab1  <- rbinom(n_vars, 1, theta_ab1)
+    cr_ab1     <- Contamination(x_tmp_ab1, 100, seed)
+    viol_ab1   <- pmax(0, cr_ab1$limit - cr_ab1$constraint)
+    score_ab1  <- theta_ab1 - lambda * sum(viol_ab1)   # g_j = 0
+    x_new_ab1  <- greedy_repair(score_ab1, seed)
+    res_ab1    <- Contamination(x_new_ab1, 100, seed)
+    y_new_ab1  <- res_ab1$fn
+    feas_ab1   <- all(res_ab1$constraint > res_ab1$limit)
+    
+    data_feasible_ab1[t + n_init_actual] <- as.logical(feas_ab1)
+    y_history_ab1[t] <- y_new_ab1
+    dh_ab1 <- data.frame(y = y_new_ab1,
+                         matrix(x_new_ab1, nrow = 1),
+                         feasibility = feas_ab1)
+    colnames(dh_ab1) <- colnames(data_history_ab1)
+    data_history_ab1 <- rbind(data_history_ab1, dh_ab1)
+    s_ab1 <- refit_svb(s_ab1$data, y_new_ab1, x_new_ab1)
+    
+    # ── ABLATION 2: Gumbel + E[theta_j], no Thompson ─────────
+    # theta is fixed at posterior mean mu_j; all randomness from Gumbel
+    mu_prob_ab2 <- extract_mean_prob(s_ab2$model, s_ab2$vb_data, s_ab2$dup)
+    
+    g_ab2      <- -log(-log(runif(n_vars)))
+    x_tmp_ab2  <- rbinom(n_vars, 1, mu_prob_ab2)
+    cr_ab2     <- Contamination(x_tmp_ab2, 100, seed)
+    viol_ab2   <- pmax(0, cr_ab2$limit - cr_ab2$constraint)
+    score_ab2  <- mu_prob_ab2 + g_ab2 - lambda * sum(viol_ab2)
+    x_new_ab2  <- greedy_repair(score_ab2, seed)
+    res_ab2    <- Contamination(x_new_ab2, 100, seed)
+    y_new_ab2  <- res_ab2$fn
+    feas_ab2   <- all(res_ab2$constraint > res_ab2$limit)
+    
+    data_feasible_ab2[t + n_init_actual] <- as.logical(feas_ab2)
+    y_history_ab2[t] <- y_new_ab2
+    dh_ab2 <- data.frame(y = y_new_ab2,
+                         matrix(x_new_ab2, nrow = 1),
+                         feasibility = feas_ab2)
+    colnames(dh_ab2) <- colnames(data_history_ab2)
+    data_history_ab2 <- rbind(data_history_ab2, dh_ab2)
+    s_ab2 <- refit_svb(s_ab2$data, y_new_ab2, x_new_ab2)
+  }
+  
+  # ---------------------------------------------------------
+  # RETURN all three conditions
+  # ---------------------------------------------------------
+  list(
+    instance  = instance_id,
+    lambda    = lambda,
+    n_init    = n_init_actual,
+    # Full method
+    full = list(
+      data       = data_history_full,
+      y_history  = y_history_full,
+      feasible   = data_feasible_full
+    ),
+    # Ablation 1: Thompson only
+    ablation_no_gumbel = list(
+      data       = data_history_ab1,
+      y_history  = y_history_ab1,
+      feasible   = data_feasible_ab1
+    ),
+    # Ablation 2: Gumbel + posterior mean
+    ablation_gumbel_mean = list(
+      data       = data_history_ab2,
+      y_history  = y_history_ab2,
+      feasible   = data_feasible_ab2
+    )
+  )
 }
 
 # ---------------------------------------------------------
@@ -465,7 +469,7 @@ run_all_experiments <- function() {
   n_instances <- 10
   lambda_grid <- c(0.1, 1, 10, 100)
   
-  base_dir <- "~/Projects:Codes/P3Compute/Contamination/results"
+  base_dir <- "~/Projects:Codes/VaR-CoCoBO/Contamination/results_corrections"
   dir.create(base_dir, showWarnings = FALSE, recursive = TRUE)
   
   for (lam in lambda_grid) {
